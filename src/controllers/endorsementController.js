@@ -1,90 +1,60 @@
-const Endorsement =
-  require("../models/Endorsement");
+const Endorsement = require("../models/Endorsement");
+const ProfileAnalytics = require("../models/ProfileAnalytics");
+const asyncHandler = require("express-async-handler");
 
-const ProfileAnalytics =
-  require("../models/ProfileAnalytics");
+// CREATE ENDORSEMENT (new endorsements start as "pending" for admin validation)
+const createEndorsement = asyncHandler(async (req, res) => {
+  const { toUser, skill, message } = req.body;
 
-
-// CREATE ENDORSEMENT
-const createEndorsement = async (req, res) => {
-  try {
-
-    const {
-      toUser,
-      skill,
-      message,
-    } = req.body;
-
-    // PREVENT SELF ENDORSEMENT
-    if (
-      toUser === req.user._id.toString()
-    ) {
-      return res.status(400).json({
-        message:
-          "You cannot endorse yourself",
-      });
-    }
-
-    const endorsement =
-      await Endorsement.create({
-        fromUser: req.user._id,
-        toUser,
-        skill,
-        message,
-      });
-
-    // UPDATE ANALYTICS
-    let analytics =
-      await ProfileAnalytics.findOne({
-        user: toUser,
-      });
-
-    if (!analytics) {
-      analytics =
-        await ProfileAnalytics.create({
-          user: toUser,
-        });
-    }
-
-    analytics.endorsementsCount += 1;
-
-    await analytics.save();
-
-    res.status(201).json(endorsement);
-
-  } catch (error) {
-    res.status(500).json({
-      message: error.message,
-    });
+  // Prevent self-endorsement
+  if (toUser === req.user._id.toString()) {
+    res.status(400);
+    throw new Error("You cannot endorse yourself");
   }
-};
 
+  // Create endorsement with "pending" status
+  const endorsement = await Endorsement.create({
+    fromUser: req.user._id,
+    toUser,
+    skill,
+    message,
+    status: "pending",
+  });
 
-// GET USER ENDORSEMENTS
-const getUserEndorsements =
-  async (req, res) => {
-    try {
+  res.status(201).json({
+    message: "Endorsement created. Awaiting admin validation.",
+    endorsement,
+  });
+});
 
-      const endorsements =
-        await Endorsement.find({
-          toUser: req.params.userId,
-        })
-          .populate(
-            "fromUser",
-            "name username"
-          )
-          .sort({ createdAt: -1 });
+// GET USER'S APPROVED ENDORSEMENTS (only show publicly on profile if approved)
+const getUserEndorsements = asyncHandler(async (req, res) => {
+  const endorsements = await Endorsement.find({
+    toUser: req.params.userId,
+    status: "approved", // Only approved endorsements show on profile
+  })
+    .populate("fromUser", "name username profileImage")
+    .lean()
+    .sort({ createdAt: -1 });
 
-      res.json(endorsements);
+  res.json(endorsements);
+});
 
-    } catch (error) {
-      res.status(500).json({
-        message: error.message,
-      });
-    }
-  };
+// GET CURRENT USER'S PENDING ENDORSEMENTS (for their review)
+const getMyPendingEndorsements = asyncHandler(async (req, res) => {
+  const endorsements = await Endorsement.find({
+    toUser: req.user._id,
+    status: "pending",
+  })
+    .populate("fromUser", "name username profileImage email")
+    .lean()
+    .sort({ createdAt: -1 });
+
+  res.json(endorsements);
+});
 
 module.exports = {
   createEndorsement,
   getUserEndorsements,
+  getMyPendingEndorsements,
 };

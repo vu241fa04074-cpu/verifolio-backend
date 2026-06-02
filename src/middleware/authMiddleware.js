@@ -1,41 +1,66 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
+// Simple in-memory cache for user lookups (TTL: 5 minutes)
+const userCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
 const protect = async (req, res, next) => {
   try {
-
     let token;
 
-    // CHECK AUTH HEADER
+    // Check authorization header
     if (
       req.headers.authorization &&
       req.headers.authorization.startsWith("Bearer")
     ) {
-
-      // GET TOKEN
       token = req.headers.authorization.split(" ")[1];
 
-      // VERIFY TOKEN
+      // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.id;
 
-      // GET USER
-      req.user = await User.findById(decoded.id).select("-password");
+      // Check cache first to reduce DB hits
+      if (userCache.has(userId)) {
+        const cached = userCache.get(userId);
+        if (Date.now() - cached.timestamp < CACHE_TTL) {
+          req.user = cached.user;
+          return next();
+        } else {
+          userCache.delete(userId);
+        }
+      }
 
+      // Get user from DB
+      const user = await User.findById(userId).select("-password").lean();
+
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+
+      // Cache the user
+      userCache.set(userId, { user, timestamp: Date.now() });
+
+      req.user = user;
       next();
-
     } else {
-      return res.status(401).json({
-        message: "Not authorized, no token",
-      });
+      return res.status(401).json({ message: "Not authorized, no token" });
     }
-
   } catch (error) {
-    return res.status(401).json({
-      message: "Token failed",
-    });
+    // Clear cache on token errors
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Token expired" });
+    }
+    return res.status(401).json({ message: "Token failed" });
   }
+};
+
+// Optional: Cache invalidation when user updates
+const invalidateUserCache = (userId) => {
+  userCache.delete(userId.toString());
 };
 
 module.exports = {
   protect,
+  invalidateUserCache,
 };

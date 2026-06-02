@@ -17,6 +17,7 @@ const userSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
+      index: true,
     },
     username: {
       type: String,
@@ -26,16 +27,36 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       minlength: 3,
       maxlength: 20,
+      index: true,
     },
     password: {
       type: String,
-      required: true,
       minlength: 6,
+      select: false,
     },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    googleEmail: String,
+    profileImage: String,
     role: {
       type: String,
       enum: ["user", "admin", "organization"],
       default: "user",
+      index: true,
+    },
+    isVerified: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
     },
   },
   {
@@ -43,13 +64,10 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// ✅ NO separate .index() calls here - unique:true above is enough
-// Removed: userSchema.index({ email: 1 });
-// Removed: userSchema.index({ username: 1 });
-
-// Hash password before saving
+// Hash password before saving (only for local auth)
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
+  if (!this.password) return;
   this.password = await bcrypt.hash(this.password, 10);
 });
 
@@ -58,4 +76,12 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
+// Prevent password from being selected by default
+userSchema.methods.toJSON = function () {
+  const obj = this.toObject();
+  delete obj.password;
+  return obj;
+};
+
 module.exports = mongoose.model("User", userSchema);
+
